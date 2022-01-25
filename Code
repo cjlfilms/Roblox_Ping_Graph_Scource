@@ -1,0 +1,133 @@
+local uis = game:GetService("UserInputService")
+
+local graph = {}
+graph.elapsed = 0
+graph.heartBeat = game:GetService("RunService").Heartbeat
+graph.pingStatsItem = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]
+graph.maxPing = 200 -- for scaling
+graph.size = Vector2.new(250, 200)
+graph.dragging = false
+graph.updateRate = 1
+
+graph.lines = {}
+
+for i=1,4 do
+    local line = Drawing.new("Line")
+    line.Color = Color3.fromRGB(0, 255, 0)
+    line.Visible = true
+    graph.lines[i] = line
+end
+
+graph.origin = workspace.CurrentCamera.ViewportSize * Vector2.new(0.05, 0.25)
+
+graph.createaxis = function(dir)
+    local line = Drawing.new("Line")
+    line.Visible = true
+    line.Color = Color3.fromRGB(255, 255, 255)
+    line.From = graph.origin
+    line.To = graph.origin + (dir == "x" and Vector2.new(graph.size.x, 0) or Vector2.new(0, -graph.size.y))
+    return line
+end
+
+graph.xaxis = graph.createaxis("x")
+graph.yaxis = graph.createaxis("y")
+
+graph.text = Drawing.new("Text")
+graph.text.Text = "Ping: 0"
+graph.text.Position = graph.origin + graph.text.TextBounds
+graph.text.Color = Color3.fromRGB(255, 255, 255)
+graph.text.Visible = true
+
+graph.points = {pings = {}}
+
+graph.updateLines = function()
+    graph.xaxis.From = graph.origin
+    graph.xaxis.To = graph.origin + Vector2.new(graph.size.x, 0)
+    
+    graph.yaxis.From = graph.origin
+    graph.yaxis.To = graph.origin + Vector2.new(0, -graph.size.y)
+    
+    for i=1,#graph.points.pings-1 do
+        local curr = graph.points.pings[i]
+        local after = graph.points.pings[i + 1]
+            
+        if after then
+            graph.lines[i].From = graph.origin + Vector2.new((graph.size.x / 4) * (i - 1), -graph.size.y * math.clamp(curr / graph.maxPing, 0, 1))
+            
+            local toDest = graph.origin + Vector2.new((graph.size.x / 4) * i, -graph.size.y * math.clamp(after / graph.maxPing, 0, 1))
+            
+            if i == #graph.points.pings - 1 and not graph.dragging then
+                for j=0,1,0.05 do
+                    graph.lines[i].To = graph.lines[i].From:lerp(toDest, j)
+                    graph.heartBeat:wait()
+                end
+            else
+                graph.lines[i].To = toDest
+            end
+        end
+    end    
+end
+
+setmetatable(graph.points, {
+    __index = graph.points.pings,
+    __newindex = function(t,k,v)
+        if k > 5 then
+            local removed = table.remove(t.pings, 1)    
+            if removed == graph.maxPing then
+                graph.maxPing = 200    
+            end
+        end
+        
+        t.pings[#t.pings + 1] = v
+        
+        if v > graph.maxPing then
+            graph.maxPing = v    
+        end
+        
+        graph.text.Text = "Ping: " .. math.round(v)
+    end
+})
+
+uis.InputBegan:connect(function(k)
+    if k.UserInputType == Enum.UserInputType.MouseButton1 then
+        local diff = Vector2.new(k.Position.x, k.Position.y) - graph.origin
+        if diff.x > 0 and diff.x < graph.size.x and diff.y < 0 and diff.y > -(graph.size.y + 25) then
+            graph.dragging = true
+        end
+    end
+end)
+
+uis.InputChanged:connect(function(k)
+    if k.UserInputType == Enum.UserInputType.MouseMovement and graph.dragging then
+        if graph.lastMousePos then
+            graph.origin += (Vector2.new(k.Position.x, k.Position.y) - graph.lastMousePos)
+            graph.updateLines()
+            
+            graph.text.Position = graph.origin + graph.text.TextBounds
+        end
+        
+        graph.lastMousePos = Vector2.new(k.Position.x, k.Position.y)
+    end
+end)
+
+uis.InputEnded:connect(function(k)
+    if k.UserInputType == Enum.UserInputType.MouseButton1 then
+        local diff = Vector2.new(k.Position.x, k.Position.y) - graph.origin
+        if diff.x > 0 and diff.x < graph.size.x and diff.y < 0 and diff.y > -(graph.size.y + 25) then
+            graph.dragging = false
+            graph.lastMousePos = nil
+        end
+    end
+end)
+
+while true do
+    local step = graph.heartBeat:wait()
+    
+    graph.elapsed += step
+   
+    if graph.elapsed % graph.updateRate <= step then
+        graph.points[#graph.points.pings + 1] = graph.pingStatsItem:GetValue()
+        
+        graph.updateLines()
+    end
+end
